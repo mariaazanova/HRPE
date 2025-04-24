@@ -43,7 +43,8 @@ subnum = length(preprocFiles);
 for isub=1:subnum
     
     loadName = preprocFiles(isub).name;
-    fileName = loadName(end-13:end-12); %extract only the number
+    tokens = regexp(loadName, '\d+', 'match'); % extract all number sequences
+    fileName = tokens{1}; %extract only the subject number
     
     EEG = pop_loadset([fileName '_preproc.set'], preproc_path);   
 
