@@ -59,7 +59,8 @@ rejchan = cell(subnum,1);
 for isub=1:subnum
     
     loadName = rawDataFiles(isub).name;
-    fileName = loadName(end-5:end-4); %extract only the subject number
+    tokens = regexp(loadName, '\d+', 'match'); % extract all number sequences
+    fileName = tokens{1}; %extract only the subject number
 
     %% load
     % load file
