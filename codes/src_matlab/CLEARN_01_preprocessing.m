@@ -74,6 +74,9 @@ for isub=1:subnum
     % force the sampling rate to be 500 Hz (instead of automatically identified 499 Hz)
     EEG.srate = 500;
 
+    % find ECG index
+    ecgIdx = find(strcmp({EEG.chanlocs.labels}, 'EKG1'));
+
     if save_files
         pop_saveset(EEG,'filename',[fileName '_raw.set'],'filepath', preproc_path);
     end
@@ -81,10 +84,10 @@ for isub=1:subnum
     %% detect R-peaks
     % for some participants, invert ECG
     if ismember(fileName, {'02', '03', '04', '26'})
-        EEG.data(64,:) = (EEG.data(64,:)*-1);
+        EEG.data(ecgIdx,:) = (EEG.data(ecgIdx,:)*-1);
     end
     % find amplitudes and latencies of R-peaks
-    ecg_raw = EEG.data(64,:); % pick ECG channel
+    ecg_raw = EEG.data(ecgIdx,:); % pick ECG channel
     [qrs_amp_raw,qrs_i_raw]=heplab_pan_tompkin(double(ecg_raw), EEG.srate, 0);
     
     %% append the detected R-peaks into the EEG events struct 
@@ -113,18 +116,25 @@ for isub=1:subnum
         pop_saveset(EEG,'filename',[fileName '_filter.set'],'filepath', preproc_path);
     end
 
-    %% remove bad channels, interpolate    
-    EEG_clean = pop_select(EEG,'nochannel',{'EOGH','EOGV','EKG1'});   
+    %% remove bad channels, interpolate 
+    nonEEG = {'EOGH', 'EOGV', 'EKG1'};
+    EEG_clean = pop_select(EEG,'nochannel',nonEEG);   
     all_chanlocs = EEG_clean.chanlocs;
     initial_ch_num = EEG_clean.nbchan;
   
     EEG_clean = clean_artifacts(EEG_clean, 'ChannelCriterion', 0.85, 'FlatlineCriterion', 5, 'BurstCriterion', 'off', 'WindowCriterion', 'off', 'Highpass', 'off');
     rejnum(isub) = initial_ch_num-EEG_clean.nbchan;   
     EEG.etc.clean_channel_num = EEG_clean.nbchan;
+
+    % find EEG indices and non EEG indices
+    allLabels = {EEG.chanlocs.labels};
+    isEEG = ~ismember(allLabels, nonEEG);
+    eegChanIdx = find(isEEG);
+    excludeIdx = find(ismember({EEG.chanlocs.labels}, nonEEG));
     
     if isfield(EEG_clean.etc, 'clean_channel_mask')
         EEG_clean = pop_interp(EEG_clean, all_chanlocs, 'spherical');    
-        EEG.data(1:61,:) = EEG_clean.data(1:61,:);
+        EEG.data(eegChanIdx,:) = EEG_clean.data(eegChanIdx,:);
         EEG.etc.clean_channel_mask = EEG_clean.etc.clean_channel_mask;
         ch_names = arrayfun(@(x) x.labels, EEG.chanlocs, 'UniformOutput', false);
         EEG.etc.interpolated_channels = ch_names(~EEG_clean.etc.clean_channel_mask);
@@ -136,7 +146,7 @@ for isub=1:subnum
     EEG.nbchan = EEG.nbchan+1;
     EEG.data(end+1,:) = zeros(1, EEG.pnts);
     EEG.chanlocs(1,EEG.nbchan).labels = 'initialReference';
-    EEG = pop_reref(EEG, [], 'exclude', [62, 63, 64]);
+    EEG = pop_reref(EEG, [], 'exclude', excludeIdx);
     EEG = pop_select(EEG,'nochannel',{'initialReference'});
 
     %% save preprocessed files
@@ -147,8 +157,8 @@ end
 writetable(array2table(rejnum), [misc_path, 'number_interpolated_channels.xlsx'], "WriteMode","replacefile")
 writetable(cell2table(rejchan), [misc_path, 'interpolated_channels.xlsx'], "WriteMode","replacefile")
 
-% quality check: number of removed channels should be less than 30
-indices = find(rejnum > 30);
+% quality check: number of removed channels should be less than the half of all channels
+indices = find(rejnum > floor(length(eegChanIdx)/2));
 
 if ~isempty(indices)
     disp('Some subjects have too many bad channels')
