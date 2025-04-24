@@ -141,6 +141,13 @@ for isub=1:subnum
         end 
     end
 
+    % plot all ICA components if needed
+    if save_plots
+        pop_topoplot(EEG_ICA, 0, 1:size(EEG_ICA.icaweights,1) ,'EEG ICA components', [ceil(sqrt(size(EEG_ICA.icaweights,1))) ceil(sqrt(size(EEG_ICA.icaweights,1)))],0,'electrodes','on');
+        saveas(gcf, [num2str(isub), '_ICA_all.png']); 
+        close;
+    end
+
     %% transfer ICA result to 0.1 Hz dataset
     
     EEG.comprej = comprej;
