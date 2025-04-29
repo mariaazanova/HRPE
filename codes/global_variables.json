@@ -1,0 +1,11 @@
+{
+    "check_ecg_shape_in_preprocessing": false,
+    "save_intermediate_files_in_preprocessing": false,
+    "save_ica_component_plots": true, 
+    "run_manual_ecg_insepction": false,
+    "identify_twave_with_trapeziums": false,
+    "run_eeg_diagnostics": true, 
+    "eeg_diag_plot_each_sub": false, 
+    "eeg_diag_save_ga": true,
+    "eeg_diag_save_csv_with_ci": false
+}

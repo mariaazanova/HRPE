@@ -1,5 +1,6 @@
-# Created by https://www.toptal.com/developers/gitignore/api/macos,linux,visualstudiocode,python,r,matlab
-# Edit at https://www.toptal.com/developers/gitignore?templates=macos,linux,visualstudiocode,python,r,matlab
+### Project-specific folders with data ###
+/data/
+/vis/
 
 ### Linux ###
 *~
@@ -310,12 +311,12 @@ rsconnect/
 /*_files/
 
 ### VisualStudioCode ###
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-!.vscode/*.code-snippets
+**/.vscode/
+!**/.vscode/settings.json
+!**/.vscode/tasks.json
+!**/.vscode/launch.json
+!**/.vscode/extensions.json
+!**/.vscode/*.code-snippets
 
 # Local History for Visual Studio Code
 .history/
@@ -328,4 +329,4 @@ rsconnect/
 .history
 .ionide
 
-# End of https://www.toptal.com/developers/gitignore/api/macos,linux,visualstudiocode,python,r,matlab
+# Created with the help of https://www.toptal.com/developers/gitignore/api/macos,linux,visualstudiocode,python,r,matlab
