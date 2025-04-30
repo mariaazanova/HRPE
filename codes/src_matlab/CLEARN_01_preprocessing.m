@@ -89,13 +89,26 @@ for isub=1:subnum
     % find amplitudes and latencies of R-peaks
     ecg_raw = EEG.data(ecgIdx,:); % pick ECG channel
     [qrs_amp_raw,qrs_i_raw]=heplab_pan_tompkin(double(ecg_raw), EEG.srate, 0);
+
+    % refine peaks
+    windowSize = 10;  % in samples
+    refinedPeaks = zeros(size(qrs_i_raw));
+    for ipeak = 1:length(qrs_i_raw)
+        idx = qrs_i_raw(ipeak);
+        % Define the window bounds
+        startIdx = max(1, idx - windowSize);
+        endIdx = min(length(ecg_raw), idx + windowSize);
+        % Find max in the window
+        [~, localMaxIdx] = max(ecg_raw(startIdx:endIdx));
+        refinedPeaks(ipeak) = startIdx + localMaxIdx - 1;
+    end
     
     %% append the detected R-peaks into the EEG events struct 
     k = length(EEG.event); % number of existing events in the EEG structure
-    evt = num2cell(qrs_i_raw);
+    evt = num2cell(refinedPeaks);
     types = repmat({'Rpeak'},1, length(evt));
-    [EEG.event(1,k+1:k+length(qrs_i_raw)).latency] = evt{:}; % assign latencies
-    [EEG.event(1,k+1:k+length(qrs_i_raw)).type] = types{:}; % assign type (Rpeak)
+    [EEG.event(1,k+1:k+length(refinedPeaks)).latency] = evt{:}; % assign latencies
+    [EEG.event(1,k+1:k+length(refinedPeaks)).type] = types{:}; % assign type (Rpeak)
     EEG = eeg_checkset(EEG,'eventconsistency'); % sorts all events by increasing latencies
 
     %% save all events (task and R-peaks)
