@@ -95,14 +95,14 @@ if check_valence_phase_interactions:
 
     # first, compare if win and lose are different within sys and dia separately
     for phase in ['Systole','Diastole']:
-        GA['Win_' + phase] = mne.read_evokeds(os.path.join(GApath, 'outcome_Win_sysDiaFeedb_' + phase + '_GA.fif'))[0]
-        GA['Lose_' + phase] = mne.read_evokeds(os.path.join(GApath, 'outcome_Lose_sysDiaFeedb_' + phase + '_GA.fif'))[0]
+        GA['Win_' + phase] = mne.read_evokeds(os.path.join(GApath, 'sysDiaFeedb_' + phase + '_outcome_Win_GA.fif'))[0]
+        GA['Lose_' + phase] = mne.read_evokeds(os.path.join(GApath, 'sysDiaFeedb_' + phase + '_outcome_Lose_GA.fif'))[0]
     
-        filepath = os.path.join(evokedspath, 'outcome_Win_sysDiaFeedb_' + phase + '.pkl')
+        filepath = os.path.join(evokedspath, 'sysDiaFeedb_' + phase + '_outcome_Win.pkl')
         with open(filepath, 'rb') as f:
             win = pickle.load(f)
         
-        filepath = os.path.join(evokedspath, 'outcome_Lose_sysDiaFeedb_' + phase + '.pkl')
+        filepath = os.path.join(evokedspath, 'sysDiaFeedb_' + phase + '_outcome_Lose.pkl')
         with open(filepath, 'rb') as f:
             lose = pickle.load(f)
         
@@ -125,11 +125,11 @@ if check_valence_phase_interactions:
     # then, can also compare if sys and dia are different within win and lose
     for valence in ['Win','Lose']:
         
-        filepath = os.path.join(evokedspath, 'outcome_'+valence+'_sysDiaFeedb_Systole.pkl')
+        filepath = os.path.join(evokedspath, 'sysDiaFeedb_Systole_outcome_'+valence+'.pkl')
         with open(filepath, 'rb') as f:
             sys = pickle.load(f)
         
-        filepath = os.path.join(evokedspath, 'outcome_'+valence+'_sysDiaFeedb_Diastole.pkl')
+        filepath = os.path.join(evokedspath, 'sysDiaFeedb_Diastole_outcome_'+valence+'.pkl')
         with open(filepath, 'rb') as f:
             dia = pickle.load(f)
         

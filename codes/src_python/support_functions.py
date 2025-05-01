@@ -1,8 +1,6 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from mne.viz import plot_topomap  
 import pickle
 import mne
 from mne import combine_evoked
@@ -10,6 +8,8 @@ from scipy.signal import find_peaks
 from itertools import product, combinations
 import pandas as pd
 import logging
+import hashlib
+import uuid
 
 def clear_terminal():
     os.system("cls" if os.name == "nt" else "clear")
@@ -73,8 +73,9 @@ def initialise_paths():
         "vispath": os.path.join(os.pardir, os.pardir, "vis"),
         "cleaningvispath": os.path.join(os.pardir, os.pardir, "vis", "cleaning"),
         "latenciesvispath": os.path.join(os.pardir, os.pardir, "vis", "latencies"),
-        "modelingvispath": os.path.join(os.pardir, os.pardir, "vis", "modeling"), # can drop?
-        "pseudotrialvispath": os.path.join(os.pardir, os.pardir, "vis", "pseudotrials")
+        "modelingvispath": os.path.join(os.pardir, os.pardir, "vis", "modeling"), 
+        "pseudotrialvispath": os.path.join(os.pardir, os.pardir, "vis", "pseudotrials"),
+        "avedfdifpath": os.path.join(os.pardir, os.pardir, "data", "avedfdif")
     }
 
     for path_name, path in paths.items():
@@ -491,116 +492,6 @@ def load_evoked_response(subject, key, files, pseudotrialpath):
     logging.warning(f"No matching file found for {subject}_{key}")
     return None
 
-
-def plot_significant_clusters(good_cluster_inds, clusters, T_obs, evokeds_dif, times, ch_info, vispath, conditions):
-
-    """
-    Plots significant clusters and saves each cluster plot as a PNG.
-
-    Parameters
-    ----------
-    good_cluster_inds : list
-        Indices of significant clusters.
-    clusters : list
-        List of clusters from the statistical test.
-    T_obs : ndarray
-        Observed T-statistics for each time point and channel.
-    grand_ave : ndarray
-        Grand average data across subjects.
-    times : ndarray
-        Time points corresponding to the data.
-    evokeds_win : list of Evoked
-        Evoked data used for plotting topomaps.
-    vispath : str
-        Directory path where to save the plots.
-    """
-    
-    grand_ave = evokeds_dif.mean(axis=0)
-    
-    for i_clu, clu_idx in enumerate(good_cluster_inds):
-        # Unpack cluster information, get unique indices
-        time_inds, space_inds = np.squeeze(clusters[clu_idx])
-        ch_inds = np.unique(space_inds)
-        time_inds = np.unique(time_inds)
-
-        # Get topography for F stat
-        f_map = T_obs[time_inds, ...].mean(axis=0)
-
-        # Get signals at significant sensors
-        signals = grand_ave[..., ch_inds].mean(axis=1)
-        sig_times = times[time_inds]
-
-        # Create spatial mask
-        mask = np.zeros((f_map.shape[0], 1), dtype=bool)
-        mask[ch_inds, :] = True
-
-        # Initialize figure
-        fig, ax_topo = plt.subplots(1, 1, figsize=(10, 3))
-        title = 'Cluster #{0}'.format(i_clu + 1)
-        fig.suptitle(title, fontsize=14)
-
-        # Plot average test statistic and mark significant sensors
-        image, _ = plot_topomap(f_map, ch_info, mask=mask, axes=ax_topo,
-                                cmap='Reds', show=False, sphere=(0.00, 0.02, 0.00, 0.09))
-
-        # Advanced matplotlib for showing image with figure and colorbar
-        divider = make_axes_locatable(ax_topo)
-
-        # Add axes for colorbar
-        ax_colorbar = divider.append_axes('right', size='5%', pad=0.05)
-        fig.colorbar(image, cax=ax_colorbar)
-        ax_topo.set_xlabel('Averaged T-map ({:0.1f} - {:0.1f} ms)'.format(
-            *sig_times[[0, -1]]
-        ))
-
-        # Add new axis for time courses and plot time courses
-        ax_signals = divider.append_axes('right', size='300%', pad=1.2)
-        ax_signals.plot(times, signals)
-
-        # Add information
-        ax_signals.axvline(0, color='k', linestyle=':')
-        ax_signals.set_xlim([times[0], times[-1]])
-        ax_signals.set_xlabel('time [ms]')
-        ax_signals.set_ylabel('effect size [V]')
-
-        # Plot significant time range
-        ymin, ymax = ax_signals.get_ylim()
-        ax_signals.fill_betweenx((ymin, ymax), sig_times[0], sig_times[-1],
-                                 color='orange', alpha=0.3)
-        ax_signals.set_ylim(ymin, ymax)
-
-        # Save the figure instead of displaying it
-        fig_name = f'cluster_{i_clu + 1}'+ '_' + conditions[0] + '_' + conditions[1] + '.png'
-        fig_path = os.path.join(vispath, fig_name)
-        fig.savefig(fig_path)
-        plt.close(fig)  # Close the figure after saving to avoid display
-
-def prepare_for_clustering(conditions, evokedspath):   
-    filepath1 = os.path.join(evokedspath, conditions[0]+'.pkl')
-
-    # Load the pickled evokeds list
-    with open(filepath1, 'rb') as f:
-        evokeds_1 = pickle.load(f)
-    
-    ch_info = evokeds_1[0].copy().pick(['eeg']).info
-    times = evokeds_1[0].times
-    
-    filepath2 = os.path.join(evokedspath, conditions[1]+'.pkl')
-        
-    # Load the pickled evokeds list
-    with open(filepath2, 'rb') as f:
-        evokeds_2 = pickle.load(f)
-    
-    evokeds_dif = []
-    
-    for sub in range(len(evokeds_1)):
-    
-        evokeds_dif.append(mne.combine_evoked([evokeds_1[sub],evokeds_2[sub]],[1,-1]))
-        evokeds_dif[-1].pick(['eeg'])
-        evokeds_dif[-1] = evokeds_dif[-1].data
-
-    return evokeds_dif, ch_info, times
-
 def preprocess_pseudotrial_filename(filename, is_tfr=False):
     """Remove subject prefix and file suffix from pseudotrial filename."""
     if is_tfr:
@@ -714,7 +605,7 @@ def extract_neural_data_multiple_roi(df, pick_sub, epochs, ch_ecg, ch_eog, ch_re
         if baseline_window_tfr:
             extract_neural_data(df, pick_sub, epochs, ch_of_interest, 'baseline_tfr'+rename_roi, baseline_window_tfr, freq=None, freq_band=None, dont_rescale=dont_rescale)
 
-def process_files(file_path, df_num_ave, pseudotrialpath, subjects, gapath, is_tfr=False):
+def process_files(file_path, df_num_ave, pseudotrialpath, subjects, gapath, is_tfr=False, mapping_db_path = None, max_filename_length = 175):
     
     pseudotrial_files = []
     if is_tfr:
@@ -725,6 +616,7 @@ def process_files(file_path, df_num_ave, pseudotrialpath, subjects, gapath, is_t
     file_list = [f for f in os.listdir(file_path) if f.endswith(".pkl") and not f.startswith(("dif_", "baseline_", "long_")) and "_corrected" not in f]
 
     for file in file_list:
+        logging.info(f'Processing {file}.')
         condition_key = file.replace(".pkl", "")
 
         if condition_key not in df_num_ave.columns:
@@ -742,10 +634,21 @@ def process_files(file_path, df_num_ave, pseudotrialpath, subjects, gapath, is_t
 
         valid_subjects = [subject_prefix for subject_prefix in subjects if df_num_ave.at[int(subject_prefix), condition_key] > 0]
 
+        logging.info(f'{len(valid_subjects)} valid subjects {valid_subjects}.')
+
         # Process valid subjects
         full_path = os.path.join(file_path, file)
         with open(full_path, 'rb') as f:
             data_list = pickle.load(f)  
+
+        logging.info(f'List of evokeds contains {len(data_list)} evokeds.')
+
+        if len(data_list)!=len(valid_subjects):
+            logging.warning(f"Number of valid subjects {len(valid_subjects)} not equal to length of evokeds list {len(data_list)} for {condition_key}")
+            if len(data_list)==len(subjects):
+                logging.warning(f"List of evokeds contains all evokeds and it is more than valid_subjects. Going through the valid ones..")
+                data_list = [data_list[subjects.index(sub)]
+                for sub in valid_subjects]
 
         for best_match_key in best_match_keys:
             corrected_list = []
@@ -778,23 +681,28 @@ def process_files(file_path, df_num_ave, pseudotrialpath, subjects, gapath, is_t
     
             # Save the corrected list as a pickle
             corrected_pickle_path = os.path.join(file_path, f"{condition_key}_corrected_{best_match_key}.pkl")
+            corrected_pickle_path = handle_long_filename(corrected_pickle_path, db_path = mapping_db_path, max_filename_length = max_filename_length)
             with open(corrected_pickle_path, 'wb') as f:
                 pickle.dump(corrected_list, f)
     
             logging.info(f"Saved corrected {'TFR' if is_tfr else 'Evoked'} list for condition {condition_key} with pseudotrial {best_match_key} at {corrected_pickle_path}")
     
             try:
-                save_group_erp(f"{condition_key}_corrected_{best_match_key}", corrected_list, gapath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=is_tfr)
+                save_group_erp(f"{condition_key}_corrected_{best_match_key}", corrected_list, gapath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=is_tfr, mapping_db_path=mapping_db_path, max_filename_length = max_filename_length)
             except Exception as e:
                 logging.error(f"Error saving grand average for corrected {condition_key} with pseudotrial {best_match_key}: {e}")
     
-            clear_output(wait=True)
-            # clear_terminal()
+            clear_terminal()
 
-def compute_condition_differences(file_path, df_num_ave, subjects, gapath, is_tfr=False):
+def compute_condition_differences(file_path, df_num_ave, subjects, gapath, is_tfr=False, mapping_db_path = None, max_filename_length = 175):
+    
+    mapping_file = mapping_db_path if mapping_db_path else os.path.join(file_path, 'filename_mapping.csv')
+    orig2short, short2orig = load_filename_mapping(mapping_file)
+
+    files = list_mapped_files(file_path, db_path=mapping_db_path, extension='.pkl')
     # Get lists of corrected and difference files
-    corrected_files = [f for f in os.listdir(file_path) if f.endswith(".pkl") and "_corrected_" in f]
-    difference_files = [f for f in os.listdir(file_path) if f.startswith("dif_") and f.endswith(".pkl") and "_corrected" not in f]
+    corrected_files = [f['virtual'] for f in files if f['virtual'].endswith(".pkl") and "_corrected_" in f['virtual']]
+    difference_files = [f['virtual']  for f in files if f['virtual'].startswith("dif_") and f['virtual'].endswith(".pkl") and "_corrected" not in f['virtual']]
 
     processed_pairs = set()
 
@@ -816,7 +724,6 @@ def compute_condition_differences(file_path, df_num_ave, subjects, gapath, is_tf
         if not matched:
             logging.warning(f"Could not resolve condition pair for {dif_file}")
             continue
-
         if (condition_key1, condition_key2) in processed_pairs or (condition_key2, condition_key1) in processed_pairs:
             continue
 
@@ -826,10 +733,10 @@ def compute_condition_differences(file_path, df_num_ave, subjects, gapath, is_tf
         for corrected_file2 in condition2_corrected_files:
             _, pseudotrial_key2 = corrected_file2.replace(".pkl", "").split("_corrected_")
 
-            corrected_file1 = f"{condition_key1}_corrected_{pseudotrial_key1}.pkl"
-            corrected_file2 = f"{condition_key2}_corrected_{pseudotrial_key2}.pkl"
+            corrected_filename1 = f"{condition_key1}_corrected_{pseudotrial_key1}.pkl"
+            corrected_filename2 = f"{condition_key2}_corrected_{pseudotrial_key2}.pkl"
 
-            if corrected_file1 not in corrected_files or corrected_file2 not in corrected_files:
+            if corrected_filename1 not in corrected_files or corrected_filename2 not in corrected_files:
                 logging.warning(f"Missing corrected files for conditions {condition_key1} or {condition_key2}")
                 continue
 
@@ -842,11 +749,15 @@ def compute_condition_differences(file_path, df_num_ave, subjects, gapath, is_tf
                 logging.info(f"Not computing differences for {condition_key1} and {condition_key2} with pseudo keys {pseudotrial_key1} and {pseudotrial_key2} - they are too different")
                 continue
 
+            # Map virtual to actual filenames for loading
+            f1 = orig2short.get(corrected_filename1, corrected_filename1)
+            f2 = orig2short.get(corrected_filename2, corrected_filename2)
+
             # Load the corrected files
-            with open(os.path.join(file_path, corrected_file1), 'rb') as f:
-                list1 = pickle.load(f)
-            with open(os.path.join(file_path, corrected_file2), 'rb') as f:
-                list2 = pickle.load(f)
+            with open(os.path.join(file_path, f1), 'rb') as fp1:
+                list1 = pickle.load(fp1)
+            with open(os.path.join(file_path, f2), 'rb') as fp2:
+                list2 = pickle.load(fp2)
 
             # Identify valid subjects for both conditions
             valid_subjects1 = [subject_prefix for subject_prefix in subjects if df_num_ave.at[int(subject_prefix), condition_key1] > 0]
@@ -869,22 +780,24 @@ def compute_condition_differences(file_path, df_num_ave, subjects, gapath, is_tf
 
             # Save the difference list
             dif_corrected_file = f"dif_{condition_key1}_corrected_{pseudotrial_key1}__{condition_key2}_corrected_{pseudotrial_key2}.pkl"
-            with open(os.path.join(file_path, dif_corrected_file), 'wb') as f:
-                pickle.dump(difference_list, f)
+            dif_corrected_path = os.path.join(file_path, dif_corrected_file)
+            dif_corrected_path = handle_long_filename(dif_corrected_path, db_path=mapping_db_path, max_filename_length=max_filename_length)
+            with open(dif_corrected_path, 'wb') as fd:
+                pickle.dump(difference_list, fd)
 
             logging.info(f"Saved corrected differences for {condition_key1} and {condition_key2} at {dif_corrected_file}")
 
             try:
                 save_group_erp(f"dif_{condition_key1}_corrected_{pseudotrial_key1}__{condition_key2}_corrected_{pseudotrial_key2}",
-                               difference_list, gapath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=is_tfr)
+                               difference_list, gapath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=is_tfr, mapping_db_path= mapping_db_path, max_filename_length = max_filename_length)
             except Exception as e:
                 logging.error(f"Error saving grand average for corrected {condition_key1} and {condition_key2}: {e}")
 
-            clear_output(wait=True)
+            clear_terminal()
           
         processed_pairs.add((condition_key1, condition_key2))
 
-def save_channels_to_csv(key, GApath, grand_avg, channels, evoked_list=None):
+def save_channels_to_csv(key, GApath, grand_avg, channels, evoked_list=None, mapping_db_path = None, max_filename_length = 175):
     
     data_dict = {"Time (s)": np.round(grand_avg.times, decimals=3)}
 
@@ -928,11 +841,12 @@ def save_channels_to_csv(key, GApath, grand_avg, channels, evoked_list=None):
 
     # Save CSV     
     csv_path = os.path.join(GApath, f"{key}_Channels{'_CI' if evoked_list else ''}.csv")
+    csv_path = handle_long_filename(csv_path, db_path=mapping_db_path, max_filename_length=max_filename_length)
     df.to_csv(csv_path, index=False)
     logging.info(f"Saved data {'with 95% CI ' if evoked_list else ''}for channels {channels} for '{key}' at: {csv_path}")
 
 
-def save_group_erp(key, evoked_list, GApath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=False):
+def save_group_erp(key, evoked_list, GApath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=False, mapping_db_path = None, max_filename_length = 175, overwrite = True):
     """
     Save grand average (GA) and optionally extract signals from specified channels with their 95% CI.
 
@@ -957,12 +871,12 @@ def save_group_erp(key, evoked_list, GApath, save_ga=True, save_csv_with_ci=True
     """
     
     evoked_list = [x for x in evoked_list if x is not None]
-    
     grand_avg = mne.grand_average(evoked_list)
 
     if save_ga:
         ga_path = os.path.join(GApath, f"{'tfr_' if is_tfr else ''}{key}_GA.{'hdf5' if is_tfr else 'fif'}")
-        grand_avg.save(ga_path, overwrite=True, verbose=False)
+        ga_path = handle_long_filename(ga_path, db_path=mapping_db_path, max_filename_length=max_filename_length)
+        grand_avg.save(ga_path, overwrite=overwrite, verbose=False)
         logging.info(f"Saved GA for condition '{key}' at: {ga_path}")
 
     if is_tfr:
@@ -970,9 +884,122 @@ def save_group_erp(key, evoked_list, GApath, save_ga=True, save_csv_with_ci=True
 
     if save_csv_with_ci:
 
-        save_channels_to_csv(key, GApath, grand_avg, channels, evoked_list)
+        save_channels_to_csv(key, GApath, grand_avg, channels, evoked_list, mapping_db_path=mapping_db_path, max_filename_length=max_filename_length)
 
     if return_ga:
         return grand_avg
     else:
         del grand_avg
+
+def handle_long_filename(file_path,
+                         db_path = None,
+                         max_filename_length = 175):
+    """
+    Ensures the filename (stem + extension) of file_path does not exceed max_filename_length.
+    If it does, replaces the stem with a unique hash (with collision avoidance), preserves the extension,
+    and records the mapping in a CSV database.
+
+    Parameters
+    ----------
+    file_path : str
+        Full path where the file will be saved.
+    db_path : str, optional
+        Path to the CSV database recording mappings. If None, defaults to
+        '<parent_dir>/filename_mapping.csv'.
+    max_filename_length : int
+        Maximum allowed length for the filename (including extension).
+
+    Returns
+    -------
+    safe_path : str
+        Either the original file_path if filename is within the limit,
+        or a new path with a shortened filename.
+    """
+    # Separate directory and filename
+    dir_name, file_name = os.path.split(file_path)
+    stem, suffix = os.path.splitext(file_name)
+
+    # If filename is short enough, return original
+    if len(file_name) <= max_filename_length:
+        return file_path
+
+    # Determine mapping database location
+    db_file = db_path if db_path else os.path.join(dir_name, "filename_mapping.csv")
+
+    # Load existing shortened names to avoid collisions
+    existing_shortened = set()
+    if os.path.exists(db_file):
+        try:
+            df_existing = pd.read_csv(db_file)
+            existing_shortened = set(df_existing['shortened'].astype(str))
+        except Exception as e:
+            logging.error(f"Could not read existing mapping DB at {db_file}: {e}")
+
+    # Generate a full MD5 hash of the stem
+    hash_full = hashlib.md5(stem.encode('utf-8')).hexdigest()
+    # Try different hash lengths to avoid collisions
+    for length in (8, 12, 16, 32):
+        candidate = f"{hash_full[:length]}{suffix}"
+        if candidate not in existing_shortened:
+            new_name = candidate
+            break
+    else:
+        # Fallback: append a random UUID4 fragment
+        new_name = f"{hash_full[:8]}_{uuid.uuid4().hex[:4]}{suffix}"
+
+    safe_path = os.path.join(dir_name, new_name)
+
+    # Record the mapping of original to new filename
+    mapping_df = pd.DataFrame({
+        "original": [file_name],
+        "shortened": [new_name]
+    })
+    try:
+        if not os.path.exists(db_file):
+            mapping_df.to_csv(db_file, index=False)
+            logging.info(f"Created mapping DB at: {db_file}")
+        else:
+            mapping_df.to_csv(db_file, mode='a', header=False, index=False)
+    except Exception as e:
+        logging.error(f"Failed to write mapping DB {db_file}: {e}")
+
+    logging.warning(f"Filename too long (>{max_filename_length} chars), using shortened name '{new_name}'")
+    return safe_path
+
+def load_filename_mapping(db_path):
+    """
+    Reads a CSV mapping with columns ['original','shortened'] and
+    returns two dicts:
+      - orig2short: original filename -> shortened filename
+      - short2orig: shortened filename -> original filename
+    """
+    if not os.path.exists(db_path):
+        return {}, {}
+    try:
+        df = pd.read_csv(db_path)
+        orig2short = dict(zip(df['original'], df['shortened']))
+        short2orig = dict(zip(df['shortened'], df['original']))
+        return orig2short, short2orig
+    except Exception as e:
+        logging.error(f"Error loading mapping DB at {db_path}: {e}")
+        return {}, {}
+
+def list_mapped_files(directory: str,
+                      db_path: str = None,
+                      extension: str = None):
+    """
+    Lists all files in `directory`, mapping any shortened names back to their original.
+
+    Returns a list of dicts:
+      { 'actual': filename_on_disk, 'virtual': original_filename }
+    """
+    mapping_file = db_path if db_path else os.path.join(directory, 'filename_mapping.csv')
+    orig2short, short2orig = load_filename_mapping(mapping_file)
+
+    entries = []
+    for fname in os.listdir(directory):
+        if extension and not fname.endswith(extension):
+            continue
+        virtual = short2orig.get(fname, fname)
+        entries.append({'actual': fname, 'virtual': virtual})
+    return entries

@@ -16,7 +16,7 @@ GApath = paths['GApath']
 derivativespath = paths['derivativespath']
 vispath = paths['vispath']
 logspath = paths['logspath']
-epochspath = paths['epochs']
+epochspath = paths['epochspath']
 
 logger = setup_logging(logspath, 'clearn09')
 

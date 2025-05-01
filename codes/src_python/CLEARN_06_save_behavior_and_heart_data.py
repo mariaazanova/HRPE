@@ -11,7 +11,7 @@ root = paths['root']
 eventspath = paths['eventspath']
 cleanpath = paths['cleanpath']
 
-logger = setup_logging(paths['logspath'], 'clearn_06')
+logger = setup_logging(paths['logspath'], 'clearn06')
 
 taskdatapath = os.path.join(root, 'CLEARN_longdata.xlsx')
 taskdata = pd.read_excel(taskdatapath)

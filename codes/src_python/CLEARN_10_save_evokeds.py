@@ -39,7 +39,7 @@ save_individual_erps_long = False
 get_difference = True # also save all pairwise differences of conditions
 epoch_tmin_plot = -0.3
 epoch_tmax_plot = 0.7
-drop_bad_epochs = True
+drop_bad_epochs = True # drop bad eeg epochs identified before, not ecg epochs for now
 
 subjects = get_file_prefixes(epochspath,'.fif','.')
 
