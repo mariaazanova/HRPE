@@ -707,6 +707,7 @@ def compute_condition_differences(file_path, df_num_ave, subjects, gapath, is_tf
     processed_pairs = set()
 
     for dif_file in difference_files:
+        logging.info(f'Processing {dif_file}.')
         # Extract condition keys from the difference file name
         file_base = dif_file.replace("dif_", "").replace(".pkl", "")
         matched = False
@@ -1003,3 +1004,190 @@ def list_mapped_files(directory: str,
         virtual = short2orig.get(fname, fname)
         entries.append({'actual': fname, 'virtual': virtual})
     return entries
+
+import re
+import itertools
+import logging
+from collections import defaultdict
+from pathlib import Path
+
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+
+CORRECTED_RE = re.compile(
+    r'^(?P<cond>.+?)_corrected_(?P<pseudo>.+?)\.pkl$')
+
+def parse_corrected(filename: str):
+    """Return (condition_key, pseudotrial_key) from a corrected file name."""
+    m = CORRECTED_RE.match(filename)
+    if not m:
+        return None, None
+    return m.group('cond'), m.group('pseudo')
+
+
+def build_condition_index(corrected_files):
+    """
+    Returns
+        * cond_keys (list[str]):  all unique condition keys, longest first
+        * pseudo_map (dict[str, set[str]]):
+            condition_key -> {pseudotrial_key, …}
+    """
+    pseudo_map = defaultdict(set)
+
+    for fn in corrected_files:
+        cond, pseudo = parse_corrected(fn)
+        if cond is None:
+            continue
+        pseudo_map[cond].add(pseudo)
+
+    cond_keys = sorted(pseudo_map, key=len, reverse=True)
+    return cond_keys, pseudo_map
+
+
+def possible_condition_pairs(dif_name, cond_keys):
+    """
+    Yields **all** (cond1, cond2) pairs that can be split out of
+    `dif_<cond1>_<cond2>.pkl`, irrespective of order.
+    """
+    base = dif_name.removeprefix('dif_').removesuffix('.pkl')
+    for c1 in cond_keys:
+        # the next token *must* be an underscore
+        if not base.startswith(f'{c1}_'):
+            continue
+        rest = base[len(c1) + 1:]
+        if rest in cond_keys:
+            yield (c1, rest)
+
+
+def token_distance(a: str, b: str) -> int:
+    """Loose filter: how many word-tokens differ?"""
+    return len(set(a.split('_')).symmetric_difference(b.split('_')))
+
+def compute_condition_differences_update(
+        file_path: str,
+        df_num_ave,
+        subjects,
+        gapath,
+        is_tfr=False,
+        mapping_db_path=None,
+        max_filename_length=175):
+
+    # ------------------------------------------------------------------
+    # 1.   File discovery
+    # ------------------------------------------------------------------
+    files = list_mapped_files(file_path, db_path=mapping_db_path,
+                              extension='.pkl')
+
+    corrected_files = [f['virtual'] for f in files
+                       if '_corrected_' in f['virtual']]
+    dif_files = [f['virtual'] for f in files
+                 if f['virtual'].startswith('dif_')
+                 and '_corrected_' not in f['virtual']]
+    
+    # ------------------------------------------------------------------
+    # 2.   Pre-compute indices from the *corrected* files
+    # ------------------------------------------------------------------
+    cond_keys, pseudo_map = build_condition_index(corrected_files)
+    logging.info('Found %d unique condition keys.',
+                 len(cond_keys))
+
+    # reverse lookup: (cond, pseudo) -> full corrected filename
+    corrected_lookup = {parse_corrected(fn): fn for fn in corrected_files}
+
+    processed = set()        #  (cond1, cond2, pseudo1, pseudo2)
+
+    # ------------------------------------------------------------------
+    # 3.   Iterate over every difference file
+    # ------------------------------------------------------------------
+    for dif_fn in dif_files:
+        logging.info('Processing %s', dif_fn)
+
+        pairs = list(possible_condition_pairs(dif_fn, cond_keys))
+        if not pairs:
+            logging.warning('No condition pair could be resolved for %s',
+                            dif_fn)
+            continue          # ------------------------------------------------
+
+        for cond1, cond2 in pairs:
+            # every pseudo-vs-pseudo combination that *exists* on disk:
+            for pseudo1, pseudo2 in itertools.product(
+                    pseudo_map[cond1], pseudo_map[cond2]):
+
+                if pseudo1 == pseudo2:
+                    logging.debug('Skip identical pseudotrials %s', pseudo1)
+                    continue
+
+                if token_distance(pseudo1, pseudo2) > 2:
+                    logging.debug('Skip very different pseudotrials %s vs %s',
+                                  pseudo1, pseudo2)
+                    continue
+
+                key = (cond1, cond2, pseudo1, pseudo2)
+                if key in processed:
+                    continue
+                processed.add(key)
+
+                fn1 = corrected_lookup.get((cond1, pseudo1))
+                fn2 = corrected_lookup.get((cond2, pseudo2))
+
+                if not fn1 or not fn2:
+                    logging.warning('Missing corrected file(s) %s / %s',
+                                    fn1 or 'NONE', fn2 or 'NONE')
+                    continue      # -------------------------------------------
+
+                # ------------------------------------------------------------
+                # 4.   Load, filter subjects, compute difference, save
+                # ------------------------------------------------------------
+                list1 = pickle.load(open(Path(file_path) / fn1, 'rb'))
+                list2 = pickle.load(open(Path(file_path) / fn2, 'rb'))
+
+                valid1 = [s for s in subjects
+                          if df_num_ave.at[int(s), cond1] > 0]
+                valid2 = [s for s in subjects
+                          if df_num_ave.at[int(s), cond2] > 0]
+                common = list(set(valid1) & set(valid2))
+
+                filtered1 = [list1[valid1.index(s)] for s in common]
+                filtered2 = [list2[valid2.index(s)] for s in common]
+
+                # need to know and check how many subjects were matched
+
+                if len(filtered1) != len(filtered2):
+                    logging.warning('Subject mismatch %s vs %s (%d ≠ %d)',
+                                    cond1, cond2,
+                                    len(filtered1), len(filtered2))
+                    continue
+
+                diff_evokeds = [
+                    mne.combine_evoked([d1, d2], [1, -1])
+                    for d1, d2 in zip(filtered1, filtered2)
+                ]
+
+                out_name = (
+                    f'dif_{cond1}_corrected_{pseudo1}'
+                    f'__{cond2}_corrected_{pseudo2}.pkl'
+                )
+                out_path = handle_long_filename(
+                    Path(file_path) / out_name,
+                    db_path=mapping_db_path,
+                    max_filename_length=max_filename_length)
+
+                with open(out_path, 'wb') as fp:
+                    pickle.dump(diff_evokeds, fp)
+
+                logging.info('Saved %s', out_name)
+
+                try:
+                    save_group_erp(out_name.removesuffix('.pkl'),
+                                   diff_evokeds, gapath,
+                                   save_ga=True, save_csv_with_ci=True,
+                                   channels=['FCz', 'Pz'],
+                                   return_ga=False, is_tfr=is_tfr,
+                                   mapping_db_path=mapping_db_path,
+                                   max_filename_length=max_filename_length)
+                except Exception as exc:
+                    logging.error('GA failed for %s – %s', out_name, exc)
+
+        logging.debug('Completed all pairs for %s', dif_fn)
+        clear_terminal()

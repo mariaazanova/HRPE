@@ -229,8 +229,8 @@ for dif_path in dif_paths:
                                                baseline_window_current, baseline_window_tfr_current,
                                                freqs_of_interest_current, dont_rescale_current)
         
-        stem, suffix = os.path.splitext(actual_file)
-        tempdfpath = os.path.join(avedfdifpath, f"{stem}.csv")
+        tempdfpath = os.path.join(avedfdifpath, f"{file_base}.csv")
+        tempdfpath = handle_long_filename(tempdfpath)
         temp_df.to_csv(tempdfpath, index = False)
         del temp_df
 
