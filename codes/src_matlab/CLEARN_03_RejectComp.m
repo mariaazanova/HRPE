@@ -56,7 +56,8 @@ EcgComp = cell(subnum,1); % track indices of rejected components related to card
 for isub=1:subnum
 
     loadName = icaFiles(isub).name;
-    fileName = loadName(end-5:end-4); 
+    tokens = regexp(loadName, '\d+', 'match'); % extract all number sequences
+    fileName = tokens{1}; %extract only the subject number
 
     EEG_ICA = pop_loadset([fileName '.set'], ica_path);  % ICA result on 1 Hz data
     EEG = pop_loadset([fileName '_preproc.set'], preproc_path); % 0.1 Hz preprocessed data
@@ -138,6 +139,13 @@ for isub=1:subnum
             saveas(gcf,strcat(vis_path,fileName,'_rejected_component_',string(icomp),'.png'));
             close all;
         end 
+    end
+
+    % plot all ICA components if needed
+    if save_plots
+        pop_topoplot(EEG_ICA, 0, 1:size(EEG_ICA.icaweights,1) ,'EEG ICA components', [ceil(sqrt(size(EEG_ICA.icaweights,1))) ceil(sqrt(size(EEG_ICA.icaweights,1)))],0,'electrodes','on');
+        saveas(gcf, [num2str(isub), '_ICA_all.png']); 
+        close;
     end
 
     %% transfer ICA result to 0.1 Hz dataset

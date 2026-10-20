@@ -43,7 +43,8 @@ subnum = length(preprocFiles);
 for isub=1:subnum
     
     loadName = preprocFiles(isub).name;
-    fileName = loadName(end-13:end-12); %extract only the number
+    tokens = regexp(loadName, '\d+', 'match'); % extract all number sequences
+    fileName = tokens{1}; %extract only the subject number
     
     EEG = pop_loadset([fileName '_preproc.set'], preproc_path);   
 
@@ -64,15 +65,22 @@ for isub=1:subnum
 
     EEG = pop_select(EEG, 'point', leave_points);
 
+    % find number of channels
+    nonEEG = {'EOGH', 'EOGV', 'EKG1'};
+    allLabels = {EEG.chanlocs.labels};
+    isEEG = ~ismember(allLabels, nonEEG);
+    eegChanIdx = find(isEEG);
+    excludeIdx = find(ismember({EEG.chanlocs.labels}, excludeChans));
+
     %% rank 
     if isfield(EEG.etc, 'clean_channel_num')
         dataRank = EEG.etc.clean_channel_num; 
     else
-        dataRank = rank(double(EEG.data'))-3; %-3 since we exclude ecg and eog electrodes in ica
+        dataRank = rank(double(EEG.data'))-length(excludeIdx); %-3 since we exclude ecg and eog electrodes in ica
     end
 
     %% run ICA
-    EEG = pop_runica(EEG,'icatype','fastica','numOfIC', dataRank,'chanind',[1:61]);
+    EEG = pop_runica(EEG,'icatype','fastica','numOfIC', dataRank,'chanind',eegChanIdx);
     pop_saveset(EEG,'filename',[fileName '.set'],'filepath',ica_path); 
 
 end
