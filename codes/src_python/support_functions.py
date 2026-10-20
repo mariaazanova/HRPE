@@ -69,6 +69,7 @@ def initialise_paths():
         "tfrpath": os.path.join(os.pardir, os.pardir, "data", "tfr"),
         "pseudotrialpath": os.path.join(os.pardir, os.pardir, "data", "pseudotrials"),
         "derivativespath": os.path.join(os.pardir, os.pardir, "data", "derivatives"),
+        "heppath": os.path.join(os.pardir, os.pardir, "data", "hep"),
         "logspath": os.path.join(os.pardir, os.pardir, "data", "derivatives", "logs"),
         "vispath": os.path.join(os.pardir, os.pardir, "vis"),
         "cleaningvispath": os.path.join(os.pardir, os.pardir, "vis", "cleaning"),
@@ -388,6 +389,10 @@ def calculate_evoked_differences(dict_evokeds, variables, subtraction_order=None
     
     # Loop over each variable and calculate differences
     for variable in variables:
+
+        if (variable == 'overall') | (variable == ['overall']):
+            continue
+
         # Identify levels of the current variable by scanning the keys in dict_evokeds
         levels = sorted(set(key.split(f"{variable}_")[1].split('_')[0] for key in dict_evokeds.keys() if f"{variable}_" in key))
         
@@ -605,7 +610,7 @@ def extract_neural_data_multiple_roi(df, pick_sub, epochs, ch_ecg, ch_eog, ch_re
         if baseline_window_tfr:
             extract_neural_data(df, pick_sub, epochs, ch_of_interest, 'baseline_tfr'+rename_roi, baseline_window_tfr, freq=None, freq_band=None, dont_rescale=dont_rescale)
 
-def process_files(file_path, df_num_ave, pseudotrialpath, subjects, gapath, is_tfr=False, mapping_db_path = None, max_filename_length = 175):
+def process_files(file_path, df_num_ave, pseudotrialpath, subjects, gapath, is_tfr=False, mapping_db_path = None, max_filename_length = 175, save_topo_csv=False, rois=None):
     
     pseudotrial_files = []
     if is_tfr:
@@ -688,7 +693,7 @@ def process_files(file_path, df_num_ave, pseudotrialpath, subjects, gapath, is_t
             logging.info(f"Saved corrected {'TFR' if is_tfr else 'Evoked'} list for condition {condition_key} with pseudotrial {best_match_key} at {corrected_pickle_path}")
     
             try:
-                save_group_erp(f"{condition_key}_corrected_{best_match_key}", corrected_list, gapath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=is_tfr, mapping_db_path=mapping_db_path, max_filename_length = max_filename_length)
+                save_group_erp_with_topo(f"{condition_key}_corrected_{best_match_key}", corrected_list, gapath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=is_tfr, mapping_db_path=mapping_db_path, max_filename_length = max_filename_length, save_topo_csv=save_topo_csv, rois=rois)
             except Exception as e:
                 logging.error(f"Error saving grand average for corrected {condition_key} with pseudotrial {best_match_key}: {e}")
     
@@ -1071,7 +1076,9 @@ def compute_condition_differences_update(
         gapath,
         is_tfr=False,
         mapping_db_path=None,
-        max_filename_length=175):
+        max_filename_length=175,
+        save_topo_csv=False, 
+        rois=None):
 
     # ------------------------------------------------------------------
     # 1.   File discovery
@@ -1179,15 +1186,382 @@ def compute_condition_differences_update(
                 logging.info('Saved %s', out_name)
 
                 try:
-                    save_group_erp(out_name.removesuffix('.pkl'),
+                    save_group_erp_with_topo(out_name.removesuffix('.pkl'),
                                    diff_evokeds, gapath,
                                    save_ga=True, save_csv_with_ci=True,
                                    channels=['FCz', 'Pz'],
                                    return_ga=False, is_tfr=is_tfr,
                                    mapping_db_path=mapping_db_path,
-                                   max_filename_length=max_filename_length)
+                                   max_filename_length=max_filename_length,
+                                   save_topo_csv=save_topo_csv, rois=rois)
                 except Exception as exc:
                     logging.error('GA failed for %s – %s', out_name, exc)
 
         logging.debug('Completed all pairs for %s', dif_fn)
         clear_terminal()
+
+def list_of_conditions_extended(save_GA_main=False, save_individual_erps_main=False, 
+                                save_GA_additional=False, save_individual_erps_additional=False,
+                                save_GA_sys_dia=False, save_individual_erps_sys_dia=False, 
+                                pseudotrial_conditions=False, compute_all_pseudotrials=False,
+                                save_GA_additional_aveIBI=True, save_individual_erps_additional_aveIBI = True):
+
+    rpeaks_main = ['changeIBI4_3', 'changeIBI5_4', 'changeIBI6_5', 'changeIBI7_6']
+    rpeaks_control = ['changeIBI3_2', 'changeIBI2_1', 'changeIBI8_7']
+    behaviors = ['outcome', 'absPE_2groups', 'expectation_3groups', 'learning_miniblock','choiceApproach']
+    pre_feedb_ibi = ['beforeFeedbSDNN_2groups', 'beforeFeedbRMSSD_2groups', 'beforeFeedbAveIBI_2groups']
+    lags = ['', '_lag1', '_lag2', '_lag3'] # , '_lag4'
+
+    # for tfr and evokeds only:
+    conditions = [['outcome'], ['choiceApproach'], ['trueCorrect_nextTrial'], ['switchStay_nextTrialAction'], ['switchStay_sameCueAction'], ['switchStay_nextTrialStrategy'], ['sysDiaFeedb'], ['sysDiaFeedb', 'outcome'], ['absPE_2groups'], ['expectation_3groups'], ['learning_miniblock'], ['outcome', 'learning_miniblock']]
+    conditions_ga = conditions.copy()
+    conditions_ind = conditions.copy()
+    conditions_pseudo = [['sysDiaFeedb']]
+
+    if save_GA_additional_aveIBI or save_individual_erps_additional_aveIBI:
+        conditions_aveIBI = [[ibi+lag] for ibi in pre_feedb_ibi for lag in lags]
+        #conditions_aveIBI2 = [[ibi+lag, 'outcome'] for ibi in pre_feedb_ibi for lag in lags]
+        #conditions_aveIBI3 = [[ibi+lag, 'sysDiaFeedb', rpeak+'_2groups'] for ibi in pre_feedb_ibi for lag in lags for rpeak in rpeaks_main]
+        conditions.extend(conditions_aveIBI)
+        #conditions.extend(conditions_aveIBI2)
+        #conditions.extend(conditions_aveIBI3)
+        if save_individual_erps_additional_aveIBI:
+            conditions_ind.extend(conditions_aveIBI)        
+            #conditions_ind.extend(conditions_aveIBI2)   
+            #conditions_ind.extend(conditions_aveIBI3)  
+        if save_GA_additional_aveIBI:
+            conditions_ga.extend(conditions_aveIBI)  
+            #conditions_ga.extend(conditions_aveIBI2)  
+            #conditions_ga.extend(conditions_aveIBI3)  
+    # for pseudo
+    if save_individual_erps_additional_aveIBI or compute_all_pseudotrials:
+        conditions_aveIBI = [[ibi+lag] for ibi in pre_feedb_ibi for lag in lags]
+        #conditions_aveIBI3 = [[ibi+lag, 'sysDiaFeedb', rpeak+'_2groups'] for ibi in pre_feedb_ibi for lag in lags for rpeak in rpeaks_main]
+        conditions_pseudo.extend(conditions_aveIBI)
+        #conditions_pseudo.extend(conditions_aveIBI3)
+        
+    # for tfr and evokeds only:
+    if save_GA_main or save_individual_erps_main:
+        conditions_hr_pe_main = [['sysDiaFeedb', rpeak+'_2groups'] for rpeak in rpeaks_main]
+        conditions.extend(conditions_hr_pe_main)
+        if save_individual_erps_main:
+            conditions_ind.extend(conditions_hr_pe_main)        
+        if save_GA_main:
+            conditions_ga.extend(conditions_hr_pe_main)    
+    # for pseudo
+    if save_individual_erps_main or compute_all_pseudotrials:
+        conditions_hr_pe_main = [['sysDiaFeedb', rpeak+'_2groups'] for rpeak in rpeaks_main]
+        conditions_pseudo.extend(conditions_hr_pe_main)
+
+    # for tfr and evokeds only:
+    if save_GA_additional or save_individual_erps_additional:
+        conditions_hr_pe_control1 = [['sysDiaFeedb', rpeak+'_2groups'] for rpeak in rpeaks_control]
+        conditions.extend(conditions_hr_pe_control1)
+        conditions_hr_pe_control2 = [['sysDiaFeedb', behavior, rpeak+'_2groups'] for rpeak in rpeaks_main for behavior in behaviors]
+        conditions.extend(conditions_hr_pe_control2)
+        if save_individual_erps_additional:
+            conditions_ind.extend(conditions_hr_pe_control1)       
+            conditions_ind.extend(conditions_hr_pe_control2)  
+        if save_GA_additional:
+            conditions_ga.extend(conditions_hr_pe_control1) 
+            conditions_ga.extend(conditions_hr_pe_control2)
+    # for pseudo
+    if save_individual_erps_additional or compute_all_pseudotrials:
+        conditions_hr_pe_control1 = [['sysDiaFeedb', rpeak+'_2groups'] for rpeak in rpeaks_control]
+        conditions_pseudo.extend(conditions_hr_pe_control1)
+        conditions_hr_pe_control2 = [['sysDiaFeedb', 'learning_miniblock', rpeak+'_2groups'] for rpeak in rpeaks_main]
+        conditions_pseudo.extend(conditions_hr_pe_control2)
+        #conditions_hr_pe_control3 = [[rpeak+'_2groups'] for rpeak in rpeaks_main]
+        #conditions_pseudo.extend(conditions_hr_pe_control3)
+        #conditions_pseudo.extend([['sysDiaFeedb','beforeFeedbAveIBI_2groups'],['sysDiaFeedb','afterFeedbAveIBI_2groups']])
+
+    # for tfr and evokeds only:
+    if save_GA_sys_dia or save_individual_erps_sys_dia:
+        conditions_sys_dia = [['sysDiaFeedb', 'outcome', 'learning_miniblock'], ['sysDiaFeedb','learning_miniblock']]
+        conditions.extend(conditions_sys_dia)
+        if save_individual_erps_sys_dia:
+            conditions_ind.extend(conditions_sys_dia)  
+        if save_GA_sys_dia:
+            conditions_ga.extend(conditions_sys_dia)
+    # for pseudo
+    if save_individual_erps_sys_dia or compute_all_pseudotrials:
+        conditions_sys_dia = [['sysDiaFeedb','learning_miniblock'],['learning_miniblock']]
+        conditions_pseudo.extend(conditions_sys_dia)
+
+    if pseudotrial_conditions:
+        conditions = conditions_pseudo
+    else:
+        conditions = [conditions, conditions_ga, conditions_ind]
+    
+    return conditions
+
+def define_evokeds_overall(epochs, sub_df, variables, bad_epochs=False, baseline=False, baseline_window=None, baseline_mode=None):
+    # epochs - epochs of this subject
+    # sub_df - metadata, same length as epochs
+    # variables - list of variables (array of strings) to use for defining evokeds
+    # bad_epochs - bool, drop bad epochs before averaging
+    # baseline - bool, apply baseline before averaging
+    # baseline window - tuple, in seconds
+
+    if baseline:
+        if isinstance(epochs, mne.time_frequency.EpochsTFR):
+            epochs.apply_baseline(baseline_window, mode=baseline_mode)
+        else:
+            epochs.apply_baseline(baseline_window)
+
+    dict_evokeds = {}
+    dict_num_ave = {}
+
+    # Handle overall case
+    if variables == ['overall']:
+        mask = pd.Series(True, index=sub_df.index)
+        if bad_epochs:
+            mask &= (sub_df['bad_epoch'] != 1)
+        dict_num_ave['overall'] = sum(mask)
+        try:
+            if isinstance(epochs, mne.time_frequency.EpochsTFR):
+                dict_evokeds['overall'] = epochs[mask].average()
+            else:
+                dict_evokeds['overall'] = epochs[mask].average(picks='all')
+        except:
+            print("Error for overall")
+            dict_evokeds['overall'] = None
+        return dict_evokeds, dict_num_ave
+
+    # for each variable, determine factors
+    dict_levels = {} 
+    for variable in variables:
+        dict_levels[variable] = sub_df[variable].astype('category').cat.categories.tolist()
+
+    variable_levels = list(dict_levels.values())
+    all_combinations = product(*variable_levels)
+    
+    for combination in all_combinations:
+        
+        interaction_string = "_".join([f"{var}_{level}" for var, level in zip(variables, combination)])
+           
+        mask = pd.Series(True, index=sub_df.index)
+        for var, level in zip(variables, combination):
+            mask &= (sub_df[var] == level)
+
+        if bad_epochs:
+             mask &= (sub_df['bad_epoch']!=1)
+        
+        dict_num_ave[interaction_string] = sum(mask)
+        
+        try:
+            if isinstance(epochs, mne.time_frequency.EpochsTFR):
+                dict_evokeds[interaction_string] = epochs[mask].average()
+            else:
+                dict_evokeds[interaction_string] = epochs[mask].average(picks='all')
+        except:
+            print(f"Error for interaction: {interaction_string}")
+            dict_evokeds[interaction_string] = None
+
+    return dict_evokeds, dict_num_ave
+
+def save_topography_csv(key, GApath, GA, rois, window_length=0.05, mapping_db_path = None, max_filename_length = 175):
+    """
+    Save topographic average values per ROI for the GA Evoked object.
+
+    Parameters
+    ----------
+    key : str
+        Identifier for the condition.
+    GApath : str
+        Output directory.
+    GA : mne.Evoked
+        Grand average Evoked object.
+    latencies : pd.DataFrame
+        DataFrame with one row, columns as ROI names, values as center latencies (in sec).
+    window_length : float
+        Duration (in sec) of the window centered on each latency to average over.
+    """
+    channel_names = GA.ch_names
+
+    topo_df = pd.DataFrame({"Channel": channel_names})
+    for roi, time_roi in rois.items():
+        avg_amplitudes = GA.copy().get_data(tmin=time_roi[0], tmax=time_roi[1]).mean(axis=1) * 1e6  # µV
+        topo_df[roi] = avg_amplitudes
+
+    topo_path = os.path.join(GApath, f"{key}_topo.csv")
+    topo_path = handle_long_filename(topo_path, db_path=mapping_db_path, max_filename_length=max_filename_length)
+    topo_df.to_csv(topo_path, index=False)
+    logging.info(f"Saved topography CSV for condition '{key}' at: {topo_path}")
+
+def save_group_erp_with_topo(key, evoked_list, GApath, save_ga=True, save_csv_with_ci=True, channels=['FCz', 'Pz'], return_ga=False, is_tfr=False, mapping_db_path = None, max_filename_length = 175, overwrite = True, save_topo_csv=False, rois=None, window_length=0.05):
+    """
+    Save grand average (GA) and optionally extract signals from specified channels with their 95% CI.
+
+    Parameters
+    ----------
+    key : str
+        Condition key to label the output files.
+    evoked_list : list of mne.Evoked
+        List of Evoked objects.
+    GApath : str
+        Path to save the outputs.
+    save_ga : bool
+        If True, saves the grand average as a .fif or .hdf5 file.
+    save_csv_with_ci : bool
+        If True, saves specified channel signals along with 95% confidence intervals as a CSV file.
+    channels : list of str
+        List of channel names to extract data from.
+    return_ga : bool
+        If True, returns the computed grand average.
+    is_tfr : bool
+        If True, handles time-frequency representations and adjusts output file formats.
+    """
+    
+    evoked_list = [x for x in evoked_list if x is not None]
+    grand_avg = mne.grand_average(evoked_list)
+
+    if save_ga:
+        ga_path = os.path.join(GApath, f"{'tfr_' if is_tfr else ''}{key}_GA.{'hdf5' if is_tfr else 'fif'}")
+        ga_path = handle_long_filename(ga_path, db_path=mapping_db_path, max_filename_length=max_filename_length)
+        grand_avg.save(ga_path, overwrite=overwrite, verbose=False)
+        logging.info(f"Saved GA for condition '{key}' at: {ga_path}")
+
+    if is_tfr:
+        save_csv_with_ci = False
+
+    if save_csv_with_ci:
+        save_channels_to_csv(key, GApath, grand_avg, channels, evoked_list, mapping_db_path=mapping_db_path, max_filename_length=max_filename_length)
+
+    if save_topo_csv and not is_tfr:
+        if rois is None:
+            logging.warning(f"Topography CSV requested but `rois` is None for condition '{key}'. Skipping topo CSV.")
+        else:
+            save_topography_csv(key, GApath, grand_avg, rois, window_length=window_length, mapping_db_path=mapping_db_path, max_filename_length=max_filename_length)
+
+    if return_ga:
+        return grand_avg
+    else:
+        del grand_avg
+
+def create_metadata_for_pseudotrials_extended(new_feedback_latencies, Rpeak_latencies, IBIs, change_IBI, miniblock_intervals, thresh_ibi, thresh_change_ibi):
+
+    ibi_labels = ['IBI' + str(i) for i in range(1, 9)]
+    change_labels = ['change' + ibi_labels[i] + '_' + str(i) for i in range(1,len(ibi_labels))]
+    change_group_labels = ['change' + ibi_labels[i] + '_' + str(i) + '_2groups' for i in range(1,len(ibi_labels))]
+    cols = ibi_labels + change_labels + change_group_labels + [
+        'sysDiaFeedb', 'phase', 'learning_miniblock',
+        'beforeFeedbAveIBI', 'afterFeedbAveIBI',
+        'beforeFeedbAveIBI_2groups', 'afterFeedbAveIBI_2groups',
+        'beforeFeedbSDNN', 'beforeFeedbRMSSD',
+        'beforeFeedbSDNN_2groups', 'beforeFeedbRMSSD_2groups',
+        'trialInBlock', 'block'
+    ]
+    meta = pd.DataFrame(columns=cols, index=range(300))
+
+    for feedb in range(len(new_feedback_latencies)):    
+        
+        ibi_before_feedb = IBIs[Rpeak_latencies<new_feedback_latencies[feedb]][-4:]
+        ibi_after_feedb = IBIs[Rpeak_latencies>new_feedback_latencies[feedb]][:4]
+        change_ibi_before_feedb = change_IBI[Rpeak_latencies<new_feedback_latencies[feedb]][-3:]
+        change_ibi_after_feedb = change_IBI[Rpeak_latencies>new_feedback_latencies[feedb]][:4]
+        
+        meta.loc[feedb, ibi_labels] = np.concatenate([ibi_before_feedb, ibi_after_feedb])
+        meta.loc[feedb, change_labels] = np.concatenate([change_ibi_before_feedb, change_ibi_after_feedb])
+        meta.loc[feedb, 'beforeFeedbAveIBI'] = np.mean(ibi_before_feedb)
+        meta.loc[feedb, 'afterFeedbAveIBI'] = np.mean(ibi_after_feedb)
+
+        meta.loc[feedb, 'beforeFeedbSDNN'] = np.std(ibi_before_feedb.astype('float64'), ddof=1)
+        meta.loc[feedb, 'beforeFeedbRMSSD'] = np.sqrt(np.mean(np.diff(ibi_before_feedb.astype('float64')) ** 2))
+
+        sampleDistToFeedb = new_feedback_latencies[feedb] - Rpeak_latencies[Rpeak_latencies<new_feedback_latencies[feedb]][-1]
+        meta.loc[feedb, 'phase'] = (sampleDistToFeedb/ibi_after_feedb[0])*360
+    
+    meta.loc[meta.phase<120,'sysDiaFeedb'] = 'Systole'
+    meta.loc[meta.phase>240,'sysDiaFeedb'] = 'Diastole'
+
+    pseudotrial_labels = []
+    for pseudotrial in new_feedback_latencies:
+        for start, end, label in miniblock_intervals:
+            if start <= pseudotrial <= end:
+                pseudotrial_labels.append(label)
+                break
+    meta['learning_miniblock'] = pseudotrial_labels
+
+    # Create trialInBlock and block (100 trials per block, 3 blocks total)
+    meta['trialInBlock'] = np.tile(np.arange(1, 101), 3)
+    meta['block'] = np.repeat([1, 2, 3], 100)
+
+    # Grouping step for selected variables
+    create_heart_groups = change_labels + [
+        'beforeFeedbAveIBI', 'afterFeedbAveIBI',
+        'beforeFeedbSDNN', 'beforeFeedbRMSSD'
+    ]
+
+    for var in create_heart_groups:
+    
+        if var in change_labels:
+            thresh = thresh_change_ibi
+        else:
+            thresh = thresh_ibi
+    
+        if isinstance(thresh, np.ndarray):
+            meta[var+'_2groups'] = pd.cut(meta[var], bins=thresh, labels=['low','high']).values
+            print('for variable %s, the thresholds were already provided. those are %s'%(var,thresh))
+        elif isinstance(thresh, dict):
+            meta[var+'_2groups'] = pd.cut(meta[var], bins=thresh[var], labels=['low','high']).values
+            print('for variable %s, the thresholds were provided in a dict. those are %s'%(var,thresh[var]))
+        else: # thresh ==2:
+            meta[var+'_2groups'] = pd.qcut(meta[var], 2, labels=['low','high']).values
+            print('for variable %s, the thresholds were computed based on current iteration. there are 2 bins'%(var))
+
+    # Compute lagged group variables within each block
+    group_level_cols = ['beforeFeedbSDNN_2groups', 'beforeFeedbRMSSD_2groups', 'beforeFeedbAveIBI_2groups']
+
+    for col in group_level_cols:
+        for lag in range(1, 4): # range(1, 5)
+            new_col = f"{col}_lag{lag}"
+            meta[new_col] = (
+                meta
+                .sort_values(by=['block', 'trialInBlock'])
+                .groupby('block')[col]
+                .shift(lag)
+            )
+
+    return meta
+
+def evokeds_by_groups(file_entry, group_cols, df_subjects, evokedspath, rois, window_length, GApath):
+    coded_name = file_entry['actual']
+    proper_name = file_entry['virtual']
+
+    try:
+        with open(os.path.join(evokedspath, coded_name), 'rb') as f:
+            evokeds = pickle.load(f)
+    except Exception as e:
+        logging.warning(f"Failed to load {coded_name}: {e}")
+        return
+
+    if len(evokeds) != len(df_subjects):
+        logging.warning(f"[{proper_name}] Mismatch: {len(evokeds)} evokeds vs {len(df_subjects)} subjects")
+        return
+
+    for group_col in group_cols:
+        group_base = group_col.replace('_2groups', '')
+        mask_high = df_subjects[group_col] == 'high'
+        mask_low = df_subjects[group_col] == 'low'
+        evokeds_high = [e for e, m in zip(evokeds, mask_high) if m]
+        evokeds_low = [e for e, m in zip(evokeds, mask_low) if m]
+
+        key_high = f"{proper_name}__{group_base}_high"
+        key_low = f"{proper_name}__{group_base}_low"
+        key_dif = f"dif_{proper_name}__{group_base}"
+
+        logging.info(f"Processing {key_high} ({len(evokeds_high)} evokeds)")
+        ga_high = save_group_erp_with_topo(key_high, evokeds_high, GApath, save_ga=True, save_csv_with_ci=True,
+                                           channels=['FCz', 'Pz'], return_ga=True, is_tfr=False,
+                                           save_topo_csv=True, rois=rois)
+
+        logging.info(f"Processing {key_low} ({len(evokeds_low)} evokeds)")
+        ga_low = save_group_erp_with_topo(key_low, evokeds_low, GApath, save_ga=True, save_csv_with_ci=True,
+                                          channels=['FCz', 'Pz'], return_ga=True, is_tfr=False,
+                                          save_topo_csv=True, rois=rois)
+
+        logging.info(f"Saving difference ERP for {key_dif}")
+        ga_dif = mne.combine_evoked([ga_high, ga_low], [1, -1])
+        save_channels_to_csv(key_dif, GApath, ga_dif, ['FCz', 'Pz'])
+        save_topography_csv(key_dif, GApath, ga_dif, rois, window_length=window_length)
